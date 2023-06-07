@@ -20,7 +20,7 @@ def generate_from_online(post_api, dataset, args):
         
         prompts = []
         for i, entry in zip(index, mini_batch):
-            prompt = dataset.retrieve_demonstrations(entry, i)
+            prompt = dataset.retrieve_demonstrations(entry, i+args.start_id)
             prompts.append(prompt)
         if args.model_name in ['glm-130b']:
             sequences = post_api.sending_post(prompts)
@@ -45,13 +45,18 @@ def generate_from_online(post_api, dataset, args):
         
 
 def generate_from_local_model(model, dataset, args):
-    aug_part = dataset.data[:args.augment_size]
+    aug_part = dataset.data[args.start_id:args.augment_size]
     seq_list = []
     for ind, entry in enumerate(tqdm(aug_part)):
-        prompt = dataset.retrieve_demonstrations(entry, ind)
+        prompt = dataset.retrieve_demonstrations(entry, ind+args.start_id)
         #print("Golden: {}".format(entry['question']))
         #print("Prompt: {}".format(prompt))
-        sequence = model.generate_text([prompt], decoding='sampling')[0][0]
+        try:
+            sequence = model.generate_text([prompt], decoding='sampling')[0][0]
+        except RuntimeError:
+            print("Golden: {}".format(entry['question']))
+            print("Prompt: {}".format(prompt))
+            continue
         #print(sequence)
         sequence = post_process(sequence, args.demo_num)
         #print("Generated text: {} \n".format(sequence))
@@ -62,7 +67,7 @@ def generate_from_local_model(model, dataset, args):
             save_id = ind//args.save_step
             s_id = save_id * args.save_step
             e_id = min((save_id + 1) * args.save_step, len(aug_part))
-            save_data(aug_part[s_id:e_id], seq_list[s_id:e_id], args, save_id)
+            save_data(aug_part[s_id:e_id], seq_list[s_id:e_id], args, save_id + args.start_id//args.save_step)
 
 def save_data(aug_part, seq_list, args, save_id):
     if args.logic_forms == 'kopl':

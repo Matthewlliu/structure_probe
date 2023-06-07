@@ -119,19 +119,19 @@ class kopl_data(object):
 
                 if if_in is False:
                     if_cover=True # no candidate can cover the rest, break
-
-        if sup is not None and len(cand)<demo_num and len(s1)>0:
+        possible_ex_num =sum([len(self.cache[self.keys[ca]]) for ca in cand])
+        if sup is not None and possible_ex_num<demo_num: #len(cand)<demo_num and len(s1)>0:
             diff = {}
-            if_in = False
+            #if_in = False
             for key_ind in sup:
                 s2 = set(self.keys[key_ind].split('<sep>'))
-                if len(s1&s2) > 0:
-                    if_in=True
+                #if len(s1&s2) > 0:
+                #    if_in=True
                 d = s1 - s2
                 diff[key_ind] = len(d)
             diff = sorted(diff.items(), key = lambda kv:(kv[1], kv[0]))
-            if if_in is True:
-                cand.append(diff[0][0])
+            #if if_in is True:
+            cand.append(diff[0][0])
         return cand
     
     def save_cache(self):
