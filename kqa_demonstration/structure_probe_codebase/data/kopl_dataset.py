@@ -67,7 +67,7 @@ class kopl_data(object):
 
         #ret = recall[:5] #TODO
         recall = [ r[0] for r in recall ] # only need the id
-        return np.random.choice(recall, min(num, len(recall)), replace=False).tolist()
+        return recall[:min(num, len(recall))]
 
     def find_max_cover(self, str1, dis_dict, sup=None, demo_num=3):
         """

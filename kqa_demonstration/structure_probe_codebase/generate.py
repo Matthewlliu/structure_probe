@@ -49,13 +49,13 @@ def generate_from_local_model(model, dataset, args):
     seq_list = []
     for ind, entry in enumerate(tqdm(aug_part)):
         prompt = dataset.retrieve_demonstrations(entry, ind)
-        print("Golden: {}".format(entry['question']))
-        print("Prompt: {}".format(prompt))
+        #print("Golden: {}".format(entry['question']))
+        #print("Prompt: {}".format(prompt))
         sequence = model.generate_text([prompt], decoding='sampling')[0][0]
-        print(sequence)
+        #print(sequence)
         sequence = post_process(sequence, args.demo_num)
-        print("Generated text: {} \n".format(sequence))
-        input()
+        #print("Generated text: {} \n".format(sequence))
+        #input()
         seq_list.append(sequence)
         
         if (ind + 1) % args.save_step == 0 or (ind + 1)==len(aug_part):
