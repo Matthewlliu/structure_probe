@@ -19,14 +19,23 @@ def seed_everything(seed=501):
     # unless you tell it to be deterministic
     torch.backends.cudnn.deterministic = True
     
-def ensemble_input(demon, inputs, lf, reverse=True):
-    prompt = 'According to the given logic form %s, generate the corresponding natural language question. ' % lf
-    if reverse:
-        demon = reversed(demon)
-    prompt += 'For examples, '
-    for pair in demon:
-        prompt += pair[1] + ' is verbalized as: ' + pair[0] + ' [SEP] '
-    prompt += inputs + ' is verbalized as: '
+def ensemble_input(demon, inputs, lf, iflf2nl, reverse=True):
+    if iflf2nl:
+        prompt = 'According to the given logic form %s, generate the corresponding natural language question. ' % lf
+        if reverse:
+            demon = reversed(demon)
+        prompt += 'For examples, '
+        for pair in demon:
+            prompt += pair[1] + ' is verbalized as: ' + pair[0] + ' [SEP] '
+        prompt += inputs + ' is verbalized as: '
+    else:
+        prompt = 'According to the given natural language question, generate the corresponding logic form in %s. ' % lf
+        if not reverse:
+            demon = reversed(demon)
+        prompt += 'For examples, '
+        for pair in demon:
+            prompt += pair[0] + ' is parsed into: ' + pair[1] + ' [SEP] '
+        prompt += inputs + ' is parsed into: '
     return prompt
 
 def levenshtein(l1, l2, thresh=np.inf):
@@ -59,6 +68,9 @@ def post_process(seq, demo_num):
         gen = gen[-1]
     ans = gen.split('[SEP]')[0]
 
+    # for gpt sparql
+    ans = gen.split('\n')[0]
+
     # for t5
     ans = ans.replace('<pad>', '').replace('</s>', '')
     return ans
@@ -66,6 +78,7 @@ def post_process(seq, demo_num):
 def post_process_api(seq):
     gen = seq.split('[SEP]')[0]
     gen = gen.strip()
+    gen = gen.split('\n')[0] # for naive
     while(gen[0]=='\n'):
         gen = gen[1:]
     return gen

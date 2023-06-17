@@ -112,8 +112,8 @@ def main():
     for k in vocab:
         print('{}:{}'.format(k, len(vocab[k])))
     model = BartForConditionalGeneration.from_pretrained(args.model_name_or_path)
-    #tokenizer = BartTokenizer.from_pretrained(args.model_name_or_path)
-    tokenizer = BartTokenizer.from_pretrained('/data/ljx/cpt/bart-base')
+    tokenizer = BartTokenizer.from_pretrained(args.model_name_or_path)
+    #tokenizer = BartTokenizer.from_pretrained('/data/ljx/cpt/bart-base')
     for token in new_tokens:
         tokenizer.add_tokens(token, special_tokens = True)
     if len(new_tokens) > 0:

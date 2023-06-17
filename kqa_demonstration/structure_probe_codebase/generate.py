@@ -5,7 +5,15 @@ from utils import post_process, post_process_api
 
 
 def generate_from_online(post_api, dataset, args):
-    aug_part = dataset.data[args.start_id:args.augment_size]
+    if args.if_lf2nl:
+        aug_part = dataset.data[args.start_id:args.augment_size]
+    else:
+        with open(args.test_dir, 'r') as f:
+            aug_part = json.load(f)
+            aug_part = aug_part[args.start_id:args.augment_size]
+        if args.toy:
+            aug_part = aug_part[:5]
+        print("Length of test set: {}".format(len(aug_part)))
     seq_list = []
     ind = 0
     indexs = list(range(len(aug_part)))
@@ -13,15 +21,18 @@ def generate_from_online(post_api, dataset, args):
     #total = len(aug_part)//args.batch_size + 1
     pbar = tqdm(total=len(aug_part))
     
-    while(ind*args.batch_size <= len(aug_part)):
+    while(ind*args.batch_size < len(aug_part)):
         s = slice(ind*args.batch_size, (ind+1)*args.batch_size)
         mini_batch = aug_part[s]
         index = indexs[s]
         
         prompts = []
+        entities = []
         for i, entry in zip(index, mini_batch):
-            prompt = dataset.retrieve_demonstrations(entry, i+args.start_id)
+            prompt, entity = dataset.retrieve_demonstrations(entry, i+args.start_id)
             prompts.append(prompt)
+            if entity is not None:
+                entities.append(entity)
         if args.model_name in ['glm-130b']:
             sequences = post_api.sending_post(prompts)
             _ = True
@@ -33,6 +44,8 @@ def generate_from_online(post_api, dataset, args):
             raise ValueError("Run out all keys")
         
         sequences = [post_process_api( s.strip() ) for s in sequences]
+        if len(entities) > 0:
+            sequences = [ s for s in zip(sequences, entities)]
         seq_list.extend(sequences)
             
         if (ind + 1)*args.batch_size % args.save_step == 0 or (ind + 1)*args.batch_size>=len(aug_part):
@@ -71,15 +84,28 @@ def generate_from_local_model(model, dataset, args):
 
 def save_data(aug_part, seq_list, args, save_id):
     if args.logic_forms == 'kopl':
-        for entry, aug_que in zip(aug_part, seq_list):
-            entry['question'] = aug_que
+        for entry, seq in zip(aug_part, seq_list):
+            if args.if_lf2nl:
+                entry['question'] = seq
+            else:
+                entry['pred'] = seq
     elif args.logic_forms == 'lambdaDCS':
-        for ind, aug_que in enumerate(seq_list):
-            aug_part[ind] = aug_que  + '\t' + aug_part[ind].split('\t')[1]
+        for ind, seq in enumerate(seq_list):
+            aug_part[ind] = seq  + '\t' + aug_part[ind].split('\t')[1]
     elif args.logic_forms == 'sparql':
-        for entry, aug_que in zip(aug_part, seq_list):
-            entry['question'] = aug_que
+        for entry, seq in zip(aug_part, seq_list):
+            if args.if_lf2nl:
+                entry['question'] = seq
+            else:
+                entry['pred'] = seq[0]
+                entry['entities'] = seq[1]
     else:
         raise ValueError("Not implemented type %s for saving" % args.logic_forms)
-    with open(os.path.join(args.output_dir, 'generated_ques_%s.json' % save_id), 'w') as f:
+
+    if args.if_lf2nl:
+        file_name = 'generated_ques_%s.json' % save_id
+    else:
+        file_name = 'pred.json'
+
+    with open(os.path.join(args.output_dir, file_name), 'w') as f:
         json.dump(aug_part, f)

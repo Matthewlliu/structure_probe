@@ -50,7 +50,7 @@ class HuggingfaceModel(object):
                 replace_with_kernel_inject=True, # replace the model with the kernel injector
             )
 
-    def generate_text(self, input_texts, max_length=512, decoding='sampling', suffix='', isfilter=True):
+    def generate_text(self, input_texts, max_length=1024, decoding='sampling', suffix='', isfilter=True):
         self.model.eval()
         sentences_list = []
         with torch.no_grad():
@@ -83,6 +83,8 @@ class HuggingfaceModel(object):
                 #logging.info('Start to generate from "{}"'.format(input_text))
                 input_encoding = self.tokenizer.encode(
                     input_text, return_tensors='pt')
+                if input_encoding.size(1)>max_length:
+                    input_encoding = input_encoding[:, :max_length]
                 input_encoding = input_encoding.to(self._cuda_device)
                 generated_tokens = self.model.generate(
                     input_encoding, **kwargs)
@@ -130,13 +132,12 @@ class GLMApi(object):
         # If TOPK/TOPP are 0 it defaults to greedy sampling, top-k will also override top-p
         data = {
             "prompt": texts,
-            "max_tokens": 640,
+            "max_tokens": 150,
             "min_tokens": 0,
             "top_k": self.args.topk,
             "top_p": self.args.topp,
             "temperature": self.args.temperature,
             "seed": 501,
-            "sampling_strategy": strategy,
             "num_beams": self.args.beam_size,
             "length_penalty": 0.9,
             "no_repeat_ngram_size": 3,
@@ -146,15 +147,13 @@ class GLMApi(object):
         #t = time.time()
         #http://180.184.81.171:9721/generate
         #http://180.184.97.60:9624/generate
-        res = requests.post("http://180.184.97.60:9624/generate", json=data).content.decode()
+        res = requests.post("http://180.184.81.171:9722/generate", json=data).content.decode()
         #t = time.time() - t
 
-        print(res)
-        input()
         res = json.loads(res)
-        print(res['text'])
-        input()
-        return res['text']
+        res = res['text']
+        res = [r[0] for r in res]
+        return res
     
 class OpenaiReq():
     def __init__(self, args):
@@ -170,16 +169,24 @@ class OpenaiReq():
         print("Successfully load %s keys" % len(keys))
         return keys
     
-    def req2openai(self,prompt,max_tokens=640):
+    def req2openai(self,prompt,max_tokens=256):
         openai.api_key = self.all_keys[self.key_it]
         if not any(self.keys_available):
             print('run out of keys')
             return '', False
+        data = {
+            'model': self.args.model_name,
+            'prompt': prompt,
+            'temperature': self.args.temperature,
+            'max_tokens': max_tokens,
+            'top_p': self.args.topp
+        }
         response = None
         while response == None:
             try:
-                response = openai.Completion.create(model=self.args.model_name, prompt=prompt, 
-                                            temperature=self.args.temperature, max_tokens=max_tokens, top_p=self.args.topp)
+                #response = openai.Completion.create(model=self.args.model_name, prompt=prompt, 
+                #                            temperature=self.args.temperature, max_tokens=max_tokens, top_p=self.args.topp)
+                response = requests.post("http://103.238.162.37:10071/completion/no_cache", json=data).content.decode()
             except Exception as e:
                 err_msg = str(e)
                 print(e)
@@ -216,6 +223,7 @@ class OpenaiReq():
         if response == None:
             return '', response
         else:
+            response = json.loads(response)
             if type(prompt) == list:
                 return [str(v['text']) for v in response['choices']], response
             else:
@@ -227,7 +235,10 @@ class OpenaiReq():
             print('run out of keys')
             return '', False
         response = None
-        while response == None:
+        max_retry = 20
+
+        try_num = 0
+        while(response == None):
             try:
                 response = openai.ChatCompletion.create(
                     model="gpt-3.5-turbo",
@@ -261,6 +272,10 @@ class OpenaiReq():
                 else:
                     print('run out of keys')
                     return '', False
+                try_num += 1
+                if try_num >= max_retry:
+                    print("%s api error, exiting" % self.args.model_name)
+                    exit()
         if response == None:
             return '', response
         else:
@@ -276,7 +291,45 @@ def get_model_from_local(args):
         raise ValueError("Invalid model name: %s" % args.model_name)
         
 def get_model_api(args):
-    if args.model_name in ['text-davinci-001', 'text-davinci-003', 'chatgpt']:
+    if args.model_name in ['text-davinci-001', 'text-davinci-003', 'code-davinci-002', 'chatgpt', 'GPT4']:
         return OpenaiReq(args)
     elif args.model_name in ['glm-130b']:
         return GLMApi(args)
+
+if __name__=='__main__':
+    texts = ["Who was the first emperor in France, and where was him from?",
+        "The Starry Night is an oil-on-canvas painting by [MASK] in June 1889."]
+    '''
+    data = {
+            "prompt": texts,
+            "max_tokens": 640,
+            "min_tokens": 0,
+            "top_k": 1,
+            "top_p": 0,
+            "temperature": 1.0,
+            "seed": 501,
+            "num_beams": 5,
+            "length_penalty": 0.9,
+            "no_repeat_ngram_size": 3,
+            "regix": ""
+        }
+    res = requests.post("http://180.184.81.171:9722/generate", json=data).content.decode()
+    if res=='':
+        print("result is empty")
+    #res = json.loads(res)
+    print(res)
+    '''
+    data = {
+        'model': 'GPT-4',
+        'prompt': texts,
+        'temperature': 1,
+        'max_tokens': 128,
+        'top_p': 1.0
+    }
+    #response = openai.Completion.create(model='text-davinci-003', prompt=texts, 
+    #                                    temperature=1, max_tokens=128)
+    response = requests.post("http://103.238.162.37:10071/chat_completion/no_cache", json=data).content.decode()
+    print(response)
+    response = json.loads(response)
+    ans = [str(v['text']).strip() for v in response['choices']]
+    print(ans)

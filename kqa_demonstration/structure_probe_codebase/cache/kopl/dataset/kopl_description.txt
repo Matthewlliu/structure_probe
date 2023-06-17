@@ -1,0 +1,30 @@
+Introduction for the formal language KOPL is as followed.
+KOPL is a query language for knowledge-based question answering. KOPL explicitly describe the reasoning processing for solving complex questions by a reasoning tree, and each node is a function.
+The function library is as followed:
+1. Findall(): Return all entities in KB.
+2. Find(): Return all entities with the given name.
+3. FilterConcept(): Find those belonging to the given concept.
+4. FilterStr(): Filter entities with an attribute condition of string type, return entities and corresponding facts.
+5. FilterNum(): Similar to FilterStr, but atrribute type is number.
+6. FilterYear(): Similar to FilterStr, but attribute type is year.
+7. FilterDate(): Similar to FilterStr, but attribute type is date.
+8. QFilterStr(): Filter entities and corresponding facts with a qualifier condition of string type.
+9. QFilterNum(): Similar to QFilterStr, but qualifier type is number.
+10. QFilterYear(): Similar to QFilterStr, but qualifier type is year.
+11. QFilterDate(): Similar to QFilterStr, but qualifier type is date.
+12. Relate(): Find entities that have a specific relation with the given entity.
+13. And(): Return the intersection of two entity sets.
+14. Or(): Return the union of two entity sets.
+15. QueryName(): Return the entity name.
+16. Count(): Return the number of entities.
+17. QueryAttr(): Return the attribute value of the entity.
+18. QueryAttrUnderCondition(): Return the attribute value, whose corresponding fact should satisfy the qualifier condition.
+19. QueryRelation(): Return the relation between two entities.
+20. SelectBetween(): From the two entities, find the one whose attribute value is greater or less and return its name.
+21. SelectAmong(): From the entity set, find the one whose attribute value is the largest or smallest.
+22. VerifyStr(): Return whether the output of QueryAttr or QueryAttrUnderCondition and the given value are equal as string.
+23. VerifyNum(): Return whether the two numbers satisfy the condition.
+24. VerifyYear(): Similar to VerifyNum.
+25. VerifyDate(): Similar to VerifyNum.
+26. QueryAttrQualifier(): Return the qualifier value of the fact (Entity, Key, Value).
+27. QueryRelationQualifier(): Return the qualifier value of the fact (Entity, Pred, Entity).

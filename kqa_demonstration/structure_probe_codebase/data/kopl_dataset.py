@@ -2,6 +2,7 @@ import os
 import json
 from utils import levenshtein, ensemble_input
 import numpy as np
+from bm25 import BM25_Model
 
 class kopl_data(object):
     def __init__(self, args):
@@ -13,23 +14,48 @@ class kopl_data(object):
         with open(self.data_path, 'r') as f:
             self.data = json.load(f)
             
-        # extract skeleton
-        if not os.path.exists(self.cache_path):
-            self.cache = self.build_cache_from_scratch()
-            self.save_cache()
-        else:
-            self.cache = {}
-            with open(self.cache_path, 'r') as f:
-                for line in f:
-                    self.cache.update(json.loads(line))
-        self.keys = list(self.cache.keys())
-        
-        # build content
-        for entry in self.data:
-            entry["all_input_content"] = self.extract_program_content(entry['program'])
+        if self.args.if_lf2nl:
+            # extract skeleton
+            if not os.path.exists(self.cache_path):
+                self.cache = self.build_cache_from_scratch()
+                self.save_cache()
+            else:
+                self.cache = {}
+                with open(self.cache_path, 'r') as f:
+                    for line in f:
+                        self.cache.update(json.loads(line))
+            self.keys = list(self.cache.keys())
+            
+            # build content
+            for entry in self.data:
+                entry["all_input_content"] = self.extract_program_content(entry['program'])
+        else:  # use bm25
+            self.docs_list = [self.entity_anonymize(d) for d in self.data]
+            self.bm25_model = BM25_Model(self.docs_list)
 
     def __len__(self):
         return len(self.data)
+
+    def entity_anonymize(self, d):
+        """
+            return: list of tokens
+        """
+        question = d['question']
+        program = d['program']
+        for f in program:
+            f_name = f['function']
+            if f_name == "Find":
+                question = question.replace(f['inputs'][0], '[ENT]')
+            #elif 'Relation' in f_name or 'Relate' in f_name:
+            #    for arg in f['inputs']:
+            #        question = question.replace(arg, '[REL]')
+            elif 'Filter' in f_name or 'Verify' in f_name:
+                for arg in f['inputs']:
+                    question = question.replace(arg, '[MASK]')
+            elif 'Attr' in f_name:
+                for arg in f['inputs']:
+                    question = question.replace(arg, '[ATTR]')
+        return question.split()
             
     def build_cache_from_scratch(self):
         cache_path = '/'.join(self.cache_path.split('/')[:-1])
@@ -153,6 +179,18 @@ class kopl_data(object):
             tmp += '(' + ', '.join(p['inputs']) + ')'
             ret += tmp
         return ret
+
+    def program2seq(self, program):
+        seq = []
+        for item in program:
+            func = item['function']
+            inputs = item['inputs']
+            args = ''
+            for input in inputs:
+                args += ' [arg] ' + input
+            seq.append(func + args)
+        seq = ' [func] '.join(seq)
+        return seq
     
     def program2funcset(self, program):
         func_set = []
@@ -167,31 +205,62 @@ class kopl_data(object):
         """
             sample_id: 用于排除自身
         """
-        program = entry['program']
-        content = self.extract_program_content(program)
-        func_set = self.program2funcset(program)
-        
-        dis_dict = {}
-        for ind, funcs in enumerate(self.keys):
-            funcs = funcs.split('<sep>')
-            dist = levenshtein(func_set, funcs)
-            if dist not in dis_dict:
-                dis_dict[dist] = [ind]
+        if self.args.if_lf2nl:
+            if self.args.if_naive:
+                with open('cache/kopl/dataset/zero-shot_prompt.txt', 'r') as f:
+                    prefix = f.read()
+                prompt = prefix + self.program_serialize(entry['program']) + ' is verbalized as:'
+                return prompt, None
+            program = entry['program']
+            content = self.extract_program_content(program)
+            func_set = self.program2funcset(program)
+            
+            dis_dict = {}
+            for ind, funcs in enumerate(self.keys):
+                funcs = funcs.split('<sep>')
+                dist = levenshtein(func_set, funcs)
+                if dist not in dis_dict:
+                    dis_dict[dist] = [ind]
+                else:
+                    dis_dict[dist].append(ind)
+                    
+            sorted_dist = sorted(dis_dict.keys())
+            if sorted_dist[0]==0 and len(self.cache[self.keys[dis_dict[sorted_dist[0]][0]]])<2: #完全相同的example数量不足
+                arg1 = dis_dict[sorted_dist[1]]
+                arg2 = dis_dict[sorted_dist[2]]
             else:
-                dis_dict[dist].append(ind)
-                
-        sorted_dist = sorted(dis_dict.keys())
-        if sorted_dist[0]==0 and len(self.cache[self.keys[dis_dict[sorted_dist[0]][0]]])<2: #完全相同的example数量不足
-            arg1 = dis_dict[sorted_dist[1]]
-            arg2 = dis_dict[sorted_dist[2]]
+                arg1 = dis_dict[sorted_dist[0]]
+                arg2 = dis_dict[sorted_dist[1]]
+            cand = self.find_max_cover(func_set, arg1, sup=arg2, demo_num=self.args.demo_num)
+            
+            pairs = self.sample_candidates(cand, content, sample_id, self.args.demo_num)
+            prompt = ensemble_input(pairs, self.program_serialize(program), self.args.logic_forms, self.args.if_lf2nl, reverse=True)
         else:
-            arg1 = dis_dict[sorted_dist[0]]
-            arg2 = dis_dict[sorted_dist[1]]
-        cand = self.find_max_cover(func_set, arg1, sup=arg2, demo_num=self.args.demo_num)
+            question = entry['question']
+            #self.docs = [self.docs_list[ind] for ind in range(len(self.data)) if ind!=sample_id]
+            scores = self.bm25_model.get_documents_score(question)
+            sort_index = np.argsort(scores)
+            cand = sort_index[-self.args.demo_num:]
+            pairs = []
+            for sample in cand:
+                que = self.data[sample]['question']
+                pro = self.data[sample]['program']
+                # pro = self.program2seq(pro)
+                pro = self.func_only(pro)
+                pairs.append([que, pro])
+            prompt = ensemble_input(pairs, entry['question'], self.args.logic_forms, self.args.if_lf2nl, reverse=True)
+            with open('cache/kopl/dataset/kopl_description.txt', 'r') as f:
+                tmp = f.read()
+            prompt = tmp + prompt
+        return prompt, None
         
-        pairs = self.sample_candidates(cand, content, sample_id, self.args.demo_num)
-        prompt = ensemble_input(pairs, self.program_serialize(program), self.args.logic_forms, reverse=True)
-        return prompt
+    def func_only(self, program):
+        seq = []
+        for item in program:
+            func = item['function']
+            seq.append(func)
+        seq = ' [func] '.join(seq)
+        return seq
         
     def sample_candidates(self, cand, content, sample_id, demo_num):
         """

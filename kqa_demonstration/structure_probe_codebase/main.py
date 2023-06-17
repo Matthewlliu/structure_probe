@@ -27,8 +27,10 @@ LOCAL_MODEL = [
 ONLINE_MODEL = [
     'text-davinci-001',
     'text-davinci-003',
+    'code-davinci-002',
     'chatgpt',
-    'glm-130b'
+    'glm-130b',
+    'GPT4'
 ]
 
 def generate(args):
@@ -63,6 +65,8 @@ def main():
                         default='kopl')
     parser.add_argument('--data_dir', type=str,
                         required=True)
+    parser.add_argument('--test_dir', type=str,
+                        default="")
     parser.add_argument('--cache_dir', type=str,
                         required=True)
     parser.add_argument('--output_dir', type=str, default='',
@@ -87,6 +91,7 @@ def main():
     parser.add_argument('--strategy', type=str,
                        default='BeamSearchStrategy')
     parser.add_argument('--if_lf2nl', action='store_true')
+    parser.add_argument('--if_naive', action='store_true')
     parser.add_argument('--toy', action='store_true')
     
     args = parser.parse_args()
@@ -98,10 +103,12 @@ def main():
     
     if args.toy:
         args.augment_size = 12
-        args.save_step = 12
+        #args.save_step = 12
         save_folder_name += '_toy'
     else:
         save_folder_name += '_%s' % args.augment_size
+    if args.if_naive:
+        save_folder_name += '_naive'
         
     if len(args.output_dir)==0:
         args.output_dir = os.path.join(args.data_dir, save_folder_name)

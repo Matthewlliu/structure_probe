@@ -2,10 +2,14 @@ import os
 import json
 from utils import levenshtein, ensemble_input
 import numpy as np
+from bm25 import BM25_Model
+from tqdm import tqdm
 
 s_symbols = ["(", ")", "AND", "JOIN", "ARGMIN", "ARGMAX", "R", "COUNT"]
 #mid2ent_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/mid2name.tsv'
 mid2ent_file = '/home/ljx/entity_list_file_freebase_complete_all_mention'
+entlink_file = '/home/ljx/GrailQA-main/entity_linking/grailqa_el.json'
+doc_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/doc_file.json'
 
 class sparql_data(object):
     def __init__(self, args):
@@ -17,34 +21,99 @@ class sparql_data(object):
         with open(self.data_path, 'r') as f:
             self.data = json.load(f)
             
-        # extract skeleton
-        if not os.path.exists(self.cache_path):
-            self.cache = self.build_cache_from_scratch()
-            self.save_cache()
-        else:
-            self.cache = {}
-            with open(self.cache_path, 'r') as f:
-                for line in f:
-                    self.cache.update(json.loads(line))
-        self.keys = list(self.cache.keys())
-        
-        # build content
-        self.content = []
-        for entry in self.data:
-            self.content.append(self.extract_content(entry['s_expression']))
+        if self.args.if_lf2nl:
+            # extract skeleton
+            if not os.path.exists(self.cache_path):
+                self.cache = self.build_cache_from_scratch()
+                self.save_cache()
+            else:
+                self.cache = {}
+                with open(self.cache_path, 'r') as f:
+                    for line in f:
+                        self.cache.update(json.loads(line))
+            self.keys = list(self.cache.keys())
+            
+            # build content
+            self.content = []
+            for entry in self.data:
+                self.content.append(self.extract_content(entry['s_expression']))
 
-        # build mid2name
-        self.mid2name = {}
-        with open(mid2ent_file, 'r') as f:
-            for line in f.readlines():
-                tmp = line.split('\t')
-                mid = tmp[0]
-                name = tmp[1]
-                self.mid2name[mid] = name
+            # build mid2name
+            self.mid2name = {}
+            with open(mid2ent_file, 'r') as f:
+                for line in f.readlines():
+                    tmp = line.split('\t')
+                    mid = tmp[0]
+                    name = tmp[1]
+                    self.mid2name[mid] = name
+        else:
+            with open(entlink_file, 'r') as f:
+                self.grailqa_el = json.load(f)
+
+            if os.path.exists(doc_file):
+                self.docs_list = json.load(open(doc_file, 'r'))
+            else:
+                self.mid2name = {}
+                with open(mid2ent_file, 'r') as f:
+                    for line in f.readlines():
+                        tmp = line.split('\t')
+                        mid = tmp[0]
+                        name = tmp[1]
+                        self.mid2name[mid] = name
+                self.docs_list = []
+                for d in tqdm(self.data):
+                    q, sp = self.doc_anonymize(d)
+                    self.docs_list.append([q, sp])
+                with open(doc_file, 'w') as f:
+                    json.dump(self.docs_list, f)
+                print('Documents cache saved')
+            
+            docs = [ d[0] for d in self.docs_list]
+            self.bm25_model = BM25_Model(docs)
         #print(self.mid2name['m.0j6v9fs'])
         #print(self.mid2name['m.020mfr'])
         #print(self.mid2name['m.025sx5b'])
         #exit()
+
+    def doc_anonymize(self, d):
+        question = d['question']
+        sp = d['sparql_query'].split('\n')[1:]
+        sp = ' '.join(sp)
+        sp = sp.split()
+
+        count = 0
+        template = '[E%s]'
+        for i in range(len(sp)):
+            part = sp[i]
+            if part.startswith(":m."):
+                mid = part[1:]
+                name = self.mid2name[mid]
+                question = question.replace(name, template % count)
+                sp[i] = ':'+template % count
+                count += 1
+        return question.split(), ' '.join(sp)
+    
+    def test_anonymize(self, d):
+        """
+            return:
+                --question
+        """
+        #sp = d['sparql_query']
+        qid = str(d['qid'])
+        question = self.grailqa_el[qid]['question']
+
+        #sp = sp.split('\n')[1:]
+        #sp = ' '.join(sp)
+        template = '[E%s]'
+        #question += " (the entity in the question are: "
+        entities = {}
+        for ind, ent_id in enumerate(self.grailqa_el[qid]['entities'].keys()):
+            #sp = sp.replace( ent_id, template % ind )
+            question = question.replace(self.grailqa_el[qid]['entities'][ent_id]['mention'], template % ind)
+            #question += template % ind + ' is %s, ' % self.grailqa_el[qid]['entities'][ent_id]['mention']
+            entities[template%ind] = [ent_id, self.grailqa_el[qid]['entities'][ent_id]['mention']]
+        #question += ' ) '
+        return question, entities
             
     def build_cache_from_scratch(self):
         cache_path = '/'.join(self.cache_path.split('/')[:-1])
@@ -114,36 +183,50 @@ class sparql_data(object):
         """
             sample_id: 用于排除自身
         """
-        sparql = entry['sparql_query']
-        s_expression = entry['s_expression']
-        content = self.extract_content(s_expression)
-        skeleton = self.extract_bones(s_expression)
+        if self.args.if_lf2nl:
+            sparql = entry['sparql_query']
+            s_expression = entry['s_expression']
+            content = self.extract_content(s_expression)
+            skeleton = self.extract_bones(s_expression)
 
-        
-        dis_dict = {}
-        for ind, funcs in enumerate(self.keys):
-            funcs = funcs.split(' ')
-            dist = levenshtein(skeleton.split(), funcs)
-            if dist not in dis_dict:
-                dis_dict[dist] = [ind]
+            
+            dis_dict = {}
+            for ind, funcs in enumerate(self.keys):
+                funcs = funcs.split(' ')
+                dist = levenshtein(skeleton.split(), funcs)
+                if dist not in dis_dict:
+                    dis_dict[dist] = [ind]
+                else:
+                    dis_dict[dist].append(ind)
+                    
+            sorted_dist = sorted(dis_dict.keys())
+
+            # select the closest keys(skeletons)' ids
+            cand = []
+            if sorted_dist[0]==0 and len(self.cache[self.keys[dis_dict[sorted_dist[0]][0]]])<3:
+                # not likely, usually there are more than 3 examples for each skeleton
+                cand.append(dis_dict[sorted_dist[0]][0])
+                cand.extend(np.random.choice(dis_dict[sorted_dist[1]], 1).tolist())
             else:
-                dis_dict[dist].append(ind)
-                
-        sorted_dist = sorted(dis_dict.keys())
-
-        # select the closest keys(skeletons)' ids
-        cand = []
-        if sorted_dist[0]==0 and len(self.cache[self.keys[dis_dict[sorted_dist[0]][0]]])<3:
-            # not likely, usually there are more than 3 examples for each skeleton
-            cand.append(dis_dict[sorted_dist[0]][0])
-            cand.extend(np.random.choice(dis_dict[sorted_dist[1]], 1).tolist())
+                # sorted_dist[0]==0 actually is always true
+                cand.append(dis_dict[sorted_dist[0]][0])
+            
+            pairs = self.sample_candidates(cand, content, sample_id, self.args.demo_num)
+            prompt = ensemble_input(pairs, self.sparql_preprocess(sparql), self.args.logic_forms, self.args.if_lf2nl, reverse=True)
+            return prompt, None
         else:
-            # sorted_dist[0]==0 actually is always true
-            cand.append(dis_dict[sorted_dist[0]][0])
-        
-        pairs = self.sample_candidates(cand, content, sample_id, self.args.demo_num)
-        prompt = ensemble_input(pairs, self.sparql_preprocess(sparql),  self.args.logic_forms, reverse=True)
-        return prompt
+            question = entry['question']
+            scores = self.bm25_model.get_documents_score(question)
+            sort_index = np.argsort(scores)
+            cand = sort_index[-self.args.demo_num:]
+            pairs = []
+            for sample in cand:
+                que, sp = self.docs_list[sample]
+                que = ' '.join(que)
+                pairs.append([que, sp])
+            que, entities = self.test_anonymize(entry)
+            prompt = ensemble_input(pairs, que, self.args.logic_forms, self.args.if_lf2nl, reverse=True)
+            return prompt, entities
 
     def sparql_preprocess(self, sp):
         sp = sp.split('\n')[1:]
@@ -154,7 +237,7 @@ class sparql_data(object):
             if part.startswith(":m."):
                 mid = part[1:]
                 name = self.mid2name[mid]
-                sp[i] = name
+                sp[i] = ':'+name
         return ' '.join(sp)
 
     def sample_candidates(self, cand, content, sample_id, demo_num):
