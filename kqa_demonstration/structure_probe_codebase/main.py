@@ -27,7 +27,7 @@ LOCAL_MODEL = [
 ONLINE_MODEL = [
     'text-davinci-001',
     'text-davinci-003',
-    'code-davinci-002',
+    'text-davinci-002',
     'chatgpt',
     'glm-130b',
     'GPT4'
@@ -100,6 +100,8 @@ def main():
     mode = 'lf2nl' if args.if_lf2nl else 'nl2lf'
     time_label = time.strftime("%Y-%m-%d", time.localtime())
     save_folder_name = '_'.join([mode, args.logic_forms, args.model_name, time_label])
+
+    save_folder_name += "_demo" + str(args.demo_num)
     
     if args.toy:
         args.augment_size = 12

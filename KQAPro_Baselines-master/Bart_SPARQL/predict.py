@@ -12,6 +12,7 @@ from utils.load_kb import DataForSPARQL
 from .data import DataLoader
 from transformers import BartConfig, BartForConditionalGeneration, BartTokenizer
 from .sparql_engine import get_sparql_answer
+from SPARQLWrapper import SPARQLWrapper, JSON
 import torch.optim as optim
 import logging
 import time
@@ -22,6 +23,14 @@ logFormatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
 rootLogger = logging.getLogger()
 import warnings
 warnings.simplefilter("ignore") # hide warnings that caused by invalid sparql query
+
+PREFIX_DICT = {
+    "rdf:": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs:": "http://www.w3.org/2000/01/rdf-schema#",
+    ":": "http://rdf.freebase.com/ns/"
+}
+PREFIX = 'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX : <http://rdf.freebase.com/ns/> '
+
 def whether_equal(answer, pred):
     """
     check whether the two arguments are equal as attribute value
@@ -87,7 +96,7 @@ def whether_equal(answer, pred):
 #     print(text)
 #     return text
 
-def post_process(text):
+def post_process(text, ent):
     pattern = re.compile(r'".*?"')
     nes = []
     for item in pattern.finditer(text):
@@ -100,11 +109,16 @@ def post_process(text):
     assert len(pos) / 2 == len(nes) + 1
     chunks = [text[pos[i]: pos[i+1]] for i in range(0, len(pos), 2)]
     for i in range(len(chunks)):
-        chunks[i] = chunks[i].replace('?', ' ?').replace('.', ' .')
+        chunks[i] = chunks[i].replace('?', ' ?') #.replace('.', ' .')
     bingo = ''
     for i in range(len(chunks) - 1):
         bingo += chunks[i] + nes[i][0]
     bingo += chunks[-1]
+
+    for t, e in ent.items():
+        if t in bingo:
+            bingo = bingo.replace(t, e[0])
+    bingo = PREFIX + bingo
     return bingo
 
 def vis(args, kb, model, data, device, tokenizer):
@@ -159,7 +173,87 @@ def validate(args, kb, model, data, device, tokenizer):
         json.dump(res, open('pred_sparql.json', 'w'))
     acc = correct / count
     logging.info('\nValid Accuracy: %.4f\n' % acc)
-    return acc 
+    return acc
+
+def evaluate_sparql(args, model, val_loader, device, tokenizer):
+    model.eval()
+    count, f1 = 0, 0
+    print("Validate sample num: %s" % len(val_loader))
+    with torch.no_grad():
+        all_outputs = []
+        all_answers = []
+        all_entities = []
+        for batch in tqdm(val_loader, total=len(val_loader)):
+            #source_ids, source_mask, choices, target_ids, answer = [x.to(device) for x in batch]
+            source_ids, source_mask, target_ids, entities, answer = batch
+            source_ids = source_ids.to(device)
+            source_mask = source_mask.to(device)
+            target_ids = target_ids.to(device)
+            outputs = model.generate(
+                input_ids=source_ids,
+                max_length = 500,
+            )
+
+            all_outputs.extend(outputs.cpu().numpy())
+            all_answers.extend(answer)
+            all_entities.extend(entities)
+        outputs = [tokenizer.decode(output_id, skip_special_tokens = True, clean_up_tokenization_spaces = True) for output_id in all_outputs]
+        print("All outputs decoded | %s" % len(outputs))
+        assert len(outputs)==len(all_entities)
+        pred_sparql = [post_process(output,ent) for output,ent in zip(outputs,all_entities)]
+        #given_answer = [data.vocab['answer_idx_to_token'][a] for a in all_answers ]
+        given_answer = []
+        for answers in all_answers:
+            given_answer.append([val_loader.vocab['answer_idx_to_token'][a] for a in answers])
+
+        res = []
+        for a, s in tqdm(zip(given_answer, pred_sparql)):
+            pred_answer = get_sparql_ans(s)
+            if pred_answer!=a:
+                print(s)
+                print(pred_answer)
+                print(a)
+            pred_f1 = caculate_f1(pred_answer, a)
+            res.append({'pred_sparql': s, 'pred_ans': pred_answer, 'gold_ans': a, 'f1': pred_f1})
+            f1 += pred_f1
+            count += 1
+        json.dump(res, open('pred_sparql.json', 'w'))
+    f1 = f1 / count
+    logging.info('\nValid F1: %.4f\n' % f1)
+    return f1
+
+def caculate_f1(pred_ans, gold_ans):
+    inter = set(pred_ans).intersection(set(gold_ans))
+    recall = len(inter) / len(gold_ans)
+    precision = 0 if len(pred_ans)==0 else len(inter) / len(pred_ans)
+    if recall==0 and precision==0:
+        f1 = 0
+    else:
+        f1 = 2* recall * precision / (recall + precision)
+    return f1
+    
+def get_sparql_ans(query):
+    """
+        return: List of answers
+    """
+    sparql = SPARQLWrapper('http://localhost:23621/sparql')
+    sparql.setQuery(query)
+    sparql.setReturnFormat(JSON)
+    out = []
+    try:
+        results = sparql.query().convert()  # json,type为dict
+        results = results['results']
+        for r in results['bindings']:
+            if r['value']['value'].startswith(PREFIX_DICT['rdf:']):
+                tmp = r['value']['value'].replace(PREFIX_DICT['rdf:'], '')
+            elif r['value']['value'].startswith(PREFIX_DICT['rdfs:']):
+                tmp = r['value']['value'].replace(PREFIX_DICT['rdfs:'], '')
+            elif r['value']['value'].startswith(PREFIX_DICT[':']):
+                tmp = r['value']['value'].replace(PREFIX_DICT[':'], '')
+            out.append(tmp)
+    except:
+        out = []
+    return out
 
 def predict(args, kb, model, data, device, tokenizer):
     model.eval()

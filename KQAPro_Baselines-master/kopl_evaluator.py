@@ -49,7 +49,7 @@ def validate(root):
     assert len(ans) == len(ans_choice)
     count = 0
     for i in range(len(ans)):
-        if ans[i] in ans_choice[i]:
+        if ans[i].strip() in ans_choice[i]:
             count += 1
     print("Accuracy: {} ({}/{})".format(count/len(ans), count, len(ans)))
 
@@ -59,15 +59,24 @@ def function_check(root):
         preds = json.load(f)
     em_score = 0
     for entry in preds:
-        pred = entry['pred'][0]
-        pred_f = [ f.strip() for f in pred.split('[func]')]
+        pred = entry['pred']
+        #pred_f = [ f.strip() for f in pred.split('[func]') if len(f.strip())>0]
+        pred_f = remove_func_arg(pred)
         gold_f = [ f['function'] for f in entry['program']]
         if pred_f == gold_f:
             em_score += 1
-            print(entry)
+            #print(entry)
     em_score /= len(preds)
     print("exact match: ", em_score)
 
+def remove_func_arg(func):
+    funcs = func.split('[func]')
+    out = []
+    for part in funcs:
+        out.append(part.split('[arg]')[0].strip())
+    return out
+
 if __name__=='__main__':
-    path = '/data/ljx/result/probeLLM/kopl/nl2lf_kopl_text-davinci-003_2023-06-13_1000'
+    path = '/data/ljx/result/probeLLM/kopl/nl2lf_kopl_text-davinci-003_2023-06-27_demo35_300'
     function_check(path)
+    validate(path)

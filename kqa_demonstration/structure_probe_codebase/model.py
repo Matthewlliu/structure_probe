@@ -24,9 +24,9 @@ def get_tokenizer_by_name(model_name):
         'gpt2-large': GPT2Tokenizer,
         'gpt2-XL': GPT2Tokenizer,
         'gpt-j': AutoTokenizer,
-        'flan-t5-large': T5Tokenizer,
-        'flan-t5-xl': T5Tokenizer,
-        'flan-t5-xxl': T5Tokenizer
+        'flan-t5-large': AutoTokenizer,
+        'flan-t5-xl': AutoTokenizer,
+        'flan-t5-xxl': AutoTokenizer
     }[model_name]
 
 class HuggingfaceModel(object):
@@ -169,7 +169,7 @@ class OpenaiReq():
         print("Successfully load %s keys" % len(keys))
         return keys
     
-    def req2openai(self,prompt,max_tokens=256):
+    def req2openai(self,prompt,max_tokens=128):
         openai.api_key = self.all_keys[self.key_it]
         if not any(self.keys_available):
             print('run out of keys')
@@ -223,7 +223,11 @@ class OpenaiReq():
         if response == None:
             return '', response
         else:
-            response = json.loads(response)
+            try:
+                response = json.loads(response)
+            except:
+                print(response)
+                exit()
             if type(prompt) == list:
                 return [str(v['text']) for v in response['choices']], response
             else:

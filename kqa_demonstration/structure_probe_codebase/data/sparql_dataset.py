@@ -10,6 +10,9 @@ s_symbols = ["(", ")", "AND", "JOIN", "ARGMIN", "ARGMAX", "R", "COUNT"]
 mid2ent_file = '/home/ljx/entity_list_file_freebase_complete_all_mention'
 entlink_file = '/home/ljx/GrailQA-main/entity_linking/grailqa_el.json'
 doc_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/doc_file.json'
+ent2hop_file = '/home/ljx/structure_probe/KQAPro_Baselines-master/grailqa_dev_ent2hop_info.json'
+with open(ent2hop_file, 'r') as f:
+    ent2hop = json.load(f)
 
 class sparql_data(object):
     def __init__(self, args):
@@ -85,7 +88,7 @@ class sparql_data(object):
         template = '[E%s]'
         for i in range(len(sp)):
             part = sp[i]
-            if part.startswith(":m."):
+            if part.startswith(":m.") or part.startswith(":g."):
                 mid = part[1:]
                 name = self.mid2name[mid]
                 question = question.replace(name, template % count)
@@ -225,6 +228,16 @@ class sparql_data(object):
                 que = ' '.join(que)
                 pairs.append([que, sp])
             que, entities = self.test_anonymize(entry)
+            
+            ent_r = ent2hop[sample_id][0]
+            rel_r = ent2hop[sample_id][1]
+            if len(ent_r)>50:
+                ent_r = ent_r[:50]
+            if len(rel_r)>50:
+                rel_r = rel_r[:50]
+
+            que = "The related entities and relations of %s are: (%s) and (%s). " % (', '.join([e[1] for k,e in entities.items()]), ', '.join(ent_r), ', '.join(rel_r)) + que
+            
             prompt = ensemble_input(pairs, que, self.args.logic_forms, self.args.if_lf2nl, reverse=True)
             return prompt, entities
 
@@ -234,7 +247,7 @@ class sparql_data(object):
         sp = sp.split()
         for i in range(len(sp)):
             part = sp[i]
-            if part.startswith(":m."):
+            if part.startswith(":m.") or part.startswith(":g."):
                 mid = part[1:]
                 name = self.mid2name[mid]
                 sp[i] = ':'+name

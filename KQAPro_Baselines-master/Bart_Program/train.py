@@ -167,7 +167,7 @@ def main():
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--seed', type=int, default=666, help='random seed')
     parser.add_argument('--learning_rate', default=3e-5, type = float)
-    parser.add_argument('--num_train_epochs', default=25, type = int)
+    parser.add_argument('--num_train_epochs', default=10, type = int)
     parser.add_argument('--save_steps', default=448, type = int)
     parser.add_argument('--logging_steps', default=448, type = int)
     parser.add_argument('--warmup_proportion', default=0.1, type = float,

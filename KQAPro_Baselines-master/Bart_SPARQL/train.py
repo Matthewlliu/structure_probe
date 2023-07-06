@@ -16,6 +16,7 @@ import torch.optim as optim
 import logging
 import time
 from utils.lr_scheduler import get_linear_schedule_with_warmup
+from .predict import evaluate_sparql
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logFormatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
@@ -40,8 +41,8 @@ def train(args):
     
     logging.info("Create model.........")
     config_class, model_class, tokenizer_class = (BartConfig, BartForConditionalGeneration, BartTokenizer)
-    tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
-    model = model_class.from_pretrained(args.model_name_or_path)
+    tokenizer = tokenizer_class.from_pretrained(os.path.join(args.model_name_or_path, 'tokenizer'))
+    model = model_class.from_pretrained(os.path.join(args.model_name_or_path, 'model'))
     model = model.to(device)
     logging.info(model)
     t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs    # Prepare optimizer and schedule (linear warmup and decay)
@@ -87,10 +88,10 @@ def train(args):
         logging.info("  Will skip the first %d steps in the first epoch", steps_trained_in_current_epoch)
     logging.info('Checking...')
     logging.info("===================Dev==================")
-    # evaluate(args, model, val_loader, device)
+    #f1 = evaluate_sparql(args, model, val_loader, device, tokenizer)
     tr_loss, logging_loss = 0.0, 0.0
     model.zero_grad()
-    for _ in range(int(args.num_train_epochs)):
+    for epoch in range(int(args.num_train_epochs)):
         pbar = ProgressBar(n_total=len(train_loader), desc='Training')
         for step, batch in enumerate(train_loader):
             # Skip past any already trained steps if resuming training
@@ -98,9 +99,12 @@ def train(args):
                 steps_trained_in_current_epoch -= 1
                 continue
             model.train()
-            batch = tuple(t.to(device) for t in batch)
+            #print(batch)
+            batch = tuple(t.to(device) for t in batch if isinstance(t, torch.Tensor))
+            #print(batch)
+            #exit()
             pad_token_id = tokenizer.pad_token_id
-            source_ids, source_mask, y = batch[0], batch[1], batch[-2]
+            source_ids, source_mask, y = batch[0], batch[1], batch[2]
             y_ids = y[:, :-1].contiguous()
             lm_labels = y[:, 1:].clone()
             lm_labels[y[:, 1:] == pad_token_id] = -100
@@ -111,6 +115,7 @@ def train(args):
                 "decoder_input_ids": y_ids.to(device),
                 "labels": lm_labels.to(device),
             }
+            #print(inputs)
             outputs = model(**inputs)
             loss = outputs[0]
             loss.backward()
@@ -145,6 +150,10 @@ def train(args):
         logging.info("\n")
         if 'cuda' in str(device):
             torch.cuda.empty_cache()
+        if (epoch+1)%5 == 0:
+            logging.info("===================Dev==================")
+            f1 = evaluate_sparql(args, model, val_loader, device, tokenizer)
+            logging.info("Dev F1 score@epoch%s: %s" % (epoch, f1))
     return global_step, tr_loss / global_step
 
 
@@ -163,8 +172,8 @@ def main():
     parser.add_argument('--batch_size', default=8, type=int)
     parser.add_argument('--seed', type=int, default=666, help='random seed')
     parser.add_argument('--learning_rate', default=3e-5, type = float)
-    parser.add_argument('--num_train_epochs', default=25, type = int)
-    parser.add_argument('--save_steps', default=448, type = int)
+    parser.add_argument('--num_train_epochs', default=10, type = int)
+    parser.add_argument('--save_steps', default=500, type = int)
     parser.add_argument('--logging_steps', default=448, type = int)
     parser.add_argument('--warmup_proportion', default=0.1, type = float,
                         help="Proportion of training to perform linear learning rate warmup for,E.g., 0.1 = 10% of training.")

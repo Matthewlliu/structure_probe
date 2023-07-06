@@ -3,8 +3,18 @@ import json
 from utils import levenshtein, ensemble_input
 import numpy as np
 import re
+from bm25 import BM25_Model
 
-domain = ['calendar', 'blocks', 'housing', 'restaurants', 'publications', 'recipes', 'social', 'basketball']
+domains = ['calendar', 'blocks', 'housing', 'restaurants', 'publications', 'recipes', 'social', 'basketball']
+lex_file = '/home/ljx/semantic-parsing-dual-master/data/overnight/human/all_lexicon.txt'
+lexicon = []
+with open(lex_file, 'r') as f:
+    for line in f.readlines():
+        line = line.strip()
+        if len(line) == 0:
+            continue
+        parts = line.split(':')
+        lexicon.append([parts[0], parts[2]])
 
 class overnight_data(object):
     def __init__(self, args):
@@ -21,22 +31,33 @@ class overnight_data(object):
             self.data = f.readlines()
         self.data = [ d.strip() for d in self.data ] 
             
-        # extract skeleton
-        if not os.path.exists(self.cache_path):
-            self.cache = self.build_cache_from_scratch()
-            self.save_cache()
-        else:
-            self.cache = {}
-            with open(self.cache_path, 'r') as f:
-                for line in f:
-                    self.cache.update(json.loads(line))
-        self.keys = list(self.cache.keys())
+        if self.args.if_lf2nl:
+            # extract skeleton
+            if not os.path.exists(self.cache_path):
+                self.cache = self.build_cache_from_scratch()
+                self.save_cache()
+            else:
+                self.cache = {}
+                with open(self.cache_path, 'r') as f:
+                    for line in f:
+                        self.cache.update(json.loads(line))
+            self.keys = list(self.cache.keys())
 
-        # extract content
-        self.content = []
-        for entry in self.data:
-            _, lf = entry.strip().split('\t')
-            self.content.append(self.extract_content(lf))
+            # extract content
+            self.content = []
+            for entry in self.data:
+                _, lf = entry.strip().split('\t')
+                self.content.append(self.extract_content(lf))
+        else:
+            self.docs_list = [self.entity_anonymize(d) for d in self.data]
+            self.bm25_model = BM25_Model(self.docs_list)
+
+    def entity_anonymize(self, entry):
+        question, _ = entry.strip().split('\t')
+        for e in lexicon:
+            if e[0] in question:
+                question = question.replace(e[0], '[E]')
+        return question.split()
 
     def build_cache_from_scratch(self):
         cache_path = '/'.join(self.cache_path.split('/')[:-1])
@@ -91,45 +112,64 @@ class overnight_data(object):
         """
             sample_id: 用于排除自身
         """
-        text, lf = entry.strip().split('\t')
+        if self.args.if_lf2nl:
+            text, lf = entry.strip().split('\t')
 
-        bones = self.extract_bones(lf)
-        content = self.extract_content(lf)
+            bones = self.extract_bones(lf)
+            content = self.extract_content(lf)
 
-        closest_bones = {}
-        min_dist = 1e5
-        for func in self.cache.keys():
-            dist = levenshtein(func.split(), bones.split(), min_dist)
-            if dist < min_dist:
-                min_dist = dist
-                closest_bones[dist] = [func]
-            elif dist == min_dist:
-                closest_bones[dist].append(func)
+            closest_bones = {}
+            min_dist = 1e5
+            for func in self.cache.keys():
+                dist = levenshtein(func.split(), bones.split(), min_dist)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_bones[dist] = [func]
+                elif dist == min_dist:
+                    closest_bones[dist].append(func)
 
-        #examples = []
-        example_func = np.random.choice(closest_bones[min_dist], 1, replace=False)
+            #examples = []
+            example_func = np.random.choice(closest_bones[min_dist], 1, replace=False)
 
-        if len(self.cache[example_func[0]]) > self.args.demo_num: # 不是等于，很有可能包含自己
-            #examples = np.random.choice(self.cache[example_func[0]], 2, replace=False
-            #print("first")
-            pass
-        else:
-            #print("second")
-            #examples = self.cache[example_func[0]]
-            if len(closest_bones[min_dist])>1: # 这种情况不太能发生
-                #print("1")
-                example_func = np.random.choice(closest_bones[min_dist], 2, replace=False)
+            if len(self.cache[example_func[0]]) > self.args.demo_num: # 不是等于，很有可能包含自己
+                #examples = np.random.choice(self.cache[example_func[0]], 2, replace=False
+                #print("first")
+                pass
             else:
-                #print("2")
-                dists = sorted(list(closest_bones.keys()))
-                another_func = np.random.choice(closest_bones[dists[1]], 1)
-                example_func.extend(another_func)
-        #print(bones)
-        #print(example_func)
-        pairs = self.sample_candidates(example_func, content, sample_id, self.args.demo_num)
+                #print("second")
+                #examples = self.cache[example_func[0]]
+                if len(closest_bones[min_dist])>1: # 这种情况不太能发生
+                    #print("1")
+                    example_func = np.random.choice(closest_bones[min_dist], 2, replace=False)
+                else:
+                    #print("2")
+                    dists = sorted(list(closest_bones.keys()))
+                    another_func = np.random.choice(closest_bones[dists[1]], 1)
+                    example_func.extend(another_func)
+            #print(bones)
+            #print(example_func)
+            pairs = self.sample_candidates(example_func, content, sample_id, self.args.demo_num)
 
-        prompt = ensemble_input(pairs, lf, self.args.logic_forms, reverse=True)
-        return prompt
+            prompt = ensemble_input(pairs, lf, self.args.logic_forms, self.args.if_lf2nl, reverse=True)
+            return prompt, None
+        else:
+            question, lf = entry.strip().split('\t')
+            scores = self.bm25_model.get_documents_score(question)
+            sort_index = np.argsort(scores)
+            cand = sort_index[-self.args.demo_num:]
+            pairs = []
+            for sample in cand:
+                que, lf = self.data[sample].strip().split('\t')
+                #lf = self.extract_bones(lf)
+                pairs.append([que, lf])
+            prompt = ensemble_input(pairs, question, self.args.logic_forms, self.args.if_lf2nl, reverse=True)
+            
+            #entity = []
+            #for e in lexicon:
+            #    if e[0] in question:
+            #        entity.append(e)
+            return prompt, None #, entity
+
 
     def sample_candidates(self, cand, content, sample_id, demo_num=2):
         """

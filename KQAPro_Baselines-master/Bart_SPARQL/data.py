@@ -12,32 +12,35 @@ def collate(batch):
     batch = list(zip(*batch))
     source_ids = torch.stack(batch[0])
     source_mask = torch.stack(batch[1])
-    choices = torch.stack(batch[2])
+    #choices = torch.stack(batch[2])
+    entities = batch[3]
     if batch[-1][0] is None:
         target_ids, answer = None, None
     else:
-        target_ids = torch.stack(batch[3])
-        answer = torch.cat(batch[4])
-    return source_ids, source_mask, choices, target_ids, answer
+        target_ids = torch.stack(batch[2])
+        #answer = torch.cat(batch[4])
+        answer = [ d.numpy().tolist()[0] for d in batch[4]]
+    return source_ids, source_mask, target_ids, entities, answer
 
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, inputs):
-        self.source_ids, self.source_mask, self.target_ids, self.choices, self.answers = inputs
+        self.source_ids, self.source_mask, self.target_ids, self.entities, self.answers = inputs
         self.is_test = len(self.answers)==0
 
 
     def __getitem__(self, index):
         source_ids = torch.LongTensor(self.source_ids[index])
         source_mask = torch.LongTensor(self.source_mask[index])
-        choices = torch.LongTensor(self.choices[index])
+        #choices = torch.LongTensor([0]) #torch.LongTensor(self.choices[index])
+        entities = self.entities[index] # A dict
         if self.is_test:
             target_ids = None
             answer = None
         else:
             target_ids = torch.LongTensor(self.target_ids[index])
             answer = torch.LongTensor([self.answers[index]])
-        return source_ids, source_mask, choices, target_ids, answer
+        return source_ids, source_mask, target_ids, entities, answer
 
 
     def __len__(self):

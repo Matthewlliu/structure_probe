@@ -245,13 +245,15 @@ class kopl_data(object):
             for sample in cand:
                 que = self.data[sample]['question']
                 pro = self.data[sample]['program']
-                # pro = self.program2seq(pro)
-                pro = self.func_only(pro)
+                pro = self.program2seq(pro)
+                #pro = self.func_only(pro)
                 pairs.append([que, pro])
             prompt = ensemble_input(pairs, entry['question'], self.args.logic_forms, self.args.if_lf2nl, reverse=True)
-            with open('cache/kopl/dataset/kopl_description.txt', 'r') as f:
-                tmp = f.read()
-            prompt = tmp + prompt
+            #with open('cache/kopl/dataset/kopl_description.txt', 'r') as f:
+            #    tmp = f.read()
+            #prompt = tmp + prompt
+        if self.args.model_name.startswith("flan"):
+            prompt += "<extra_id_0>"
         return prompt, None
         
     def func_only(self, program):

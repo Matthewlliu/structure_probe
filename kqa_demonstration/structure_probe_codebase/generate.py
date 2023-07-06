@@ -3,14 +3,26 @@ import json
 from tqdm import tqdm
 from utils import post_process, post_process_api
 
+sample_path = '/home/ljx/structure_probe/KQAPro_Baselines-master/sampled_grailqa_dev_120.json'
+with open(sample_path, 'r') as f:
+    sample_id = json.load(f)
 
 def generate_from_online(post_api, dataset, args):
     if args.if_lf2nl:
         aug_part = dataset.data[args.start_id:args.augment_size]
     else:
-        with open(args.test_dir, 'r') as f:
-            aug_part = json.load(f)
-            aug_part = aug_part[args.start_id:args.augment_size]
+        if args.logic_forms == 'lambdaDCS':
+            aug_part = []
+            for k, inds in sample_id.items():
+                with open(os.path.join(args.test_dir, k+'_test.tsv'), 'r') as f:
+                    tmp = f.readlines()
+                    aug_part.extend([ tmp[i] for i in inds ])
+        else:
+            with open(args.test_dir, 'r') as f:
+                aug_part = json.load(f)
+                #aug_part = aug_part[args.start_id:args.augment_size]
+                aug_part = [  aug_part[i] for i in sample_id ]
+
         if args.toy:
             aug_part = aug_part[:5]
         print("Length of test set: {}".format(len(aug_part)))
@@ -33,6 +45,8 @@ def generate_from_online(post_api, dataset, args):
             prompts.append(prompt)
             if entity is not None:
                 entities.append(entity)
+            #print("Program: ",entry['sparql_query'])
+            #print("Prompt:, ",prompt)
         if args.model_name in ['glm-130b']:
             sequences = post_api.sending_post(prompts)
             _ = True
@@ -43,9 +57,12 @@ def generate_from_online(post_api, dataset, args):
         if _ is False:
             raise ValueError("Run out all keys")
         
+        #print(sequences)
         sequences = [post_process_api( s.strip() ) for s in sequences]
         if len(entities) > 0:
             sequences = [ s for s in zip(sequences, entities)]
+        #print("generated: ", sequences)
+        #input()
         seq_list.extend(sequences)
             
         if (ind + 1)*args.batch_size % args.save_step == 0 or (ind + 1)*args.batch_size>=len(aug_part):
@@ -61,15 +78,15 @@ def generate_from_local_model(model, dataset, args):
     aug_part = dataset.data[args.start_id:args.augment_size]
     seq_list = []
     for ind, entry in enumerate(tqdm(aug_part)):
-        prompt = dataset.retrieve_demonstrations(entry, ind+args.start_id)
+        prompt, _ = dataset.retrieve_demonstrations(entry, ind+args.start_id)
         #print("Golden: {}".format(entry['question']))
         #print("Prompt: {}".format(prompt))
-        try:
-            sequence = model.generate_text([prompt], decoding='sampling')[0][0]
-        except RuntimeError:
-            print("Golden: {}".format(entry['question']))
-            print("Prompt: {}".format(prompt))
-            continue
+        #try:
+        sequence = model.generate_text([prompt], decoding='beam_sample')[0][0]
+        #except RuntimeError:
+        #    print("Golden: {}".format(entry['question']))
+        #    print("Prompt: {}".format(prompt))
+        #    continue
         #print(sequence)
         sequence = post_process(sequence, args.demo_num)
         #print("Generated text: {} \n".format(sequence))
