@@ -41,6 +41,7 @@ class HuggingfaceModel(object):
         self.model = model_cls.from_pretrained(args.model_dir)
         tokenizer_cls = get_tokenizer_by_name(args.model_name)
         self.tokenizer = tokenizer_cls.from_pretrained(args.model_dir)
+        
         if args.model_name.startswith('gpt') or args.model_name.startswith('flan'):
             self.model = deepspeed.init_inference(
                 model=self.model,      # Transformers models
@@ -49,6 +50,7 @@ class HuggingfaceModel(object):
                 replace_method="auto", # Lets DS autmatically identify the layer to replace
                 replace_with_kernel_inject=True, # replace the model with the kernel injector
             )
+        
 
     def generate_text(self, input_texts, max_length=1024, decoding='sampling', suffix='', isfilter=True):
         self.model.eval()
@@ -182,14 +184,23 @@ class OpenaiReq():
             'top_p': self.args.topp
         }
         response = None
+        count = 0
         while response == None:
+            if count >= 10:
+                break
+            count += 1
             try:
                 #response = openai.Completion.create(model=self.args.model_name, prompt=prompt, 
                 #                            temperature=self.args.temperature, max_tokens=max_tokens, top_p=self.args.topp)
                 response = requests.post("http://103.238.162.37:10071/completion/no_cache", json=data).content.decode()
+                response = json.loads(response)
             except Exception as e:
                 err_msg = str(e)
                 print(e)
+                print(response)
+                print("Re-query api again [%s/10]" % (count) )
+                response = None
+
                 if 'server' in err_msg: # this err_msg occure when openai server is down
                     time.sleep(2) # sleep a while, then try again
                     continue
@@ -203,7 +214,7 @@ class OpenaiReq():
                     #print('quota' in err_msg)
                     #input()
                     if 'quota' in err_msg:
-                        self.keys_available[self.key_it] = False # run out of quota
+                        #self.keys_available[self.key_it] = False # run out of quota
                         print(f'we have {sum(self.keys_available)} keys available')
                     # maybe reach the rate limit, switch to next key
                     self.key_it = (self.key_it + 1) % len(self.all_keys)
@@ -221,13 +232,17 @@ class OpenaiReq():
                         print('run out of keys')
                         return '', False
         if response == None:
+            raise ValueError("API issue. Max tries reached, no returns")
             return '', response
         else:
+            '''
             try:
                 response = json.loads(response)
-            except:
+            except Exception as e:
+                print(e)
                 print(response)
-                exit()
+            #    exit()
+            '''
             if type(prompt) == list:
                 return [str(v['text']) for v in response['choices']], response
             else:

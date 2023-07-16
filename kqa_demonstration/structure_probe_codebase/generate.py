@@ -9,7 +9,7 @@ with open(sample_path, 'r') as f:
 
 def generate_from_online(post_api, dataset, args):
     if args.if_lf2nl:
-        aug_part = dataset.data[args.start_id:args.augment_size]
+        aug_part = dataset.aug_part[args.start_id:args.augment_size]
     else:
         if args.logic_forms == 'lambdaDCS':
             aug_part = []
@@ -75,7 +75,7 @@ def generate_from_online(post_api, dataset, args):
         
 
 def generate_from_local_model(model, dataset, args):
-    aug_part = dataset.data[args.start_id:args.augment_size]
+    aug_part = dataset.aug_part[args.start_id:args.augment_size]
     seq_list = []
     for ind, entry in enumerate(tqdm(aug_part)):
         prompt, _ = dataset.retrieve_demonstrations(entry, ind+args.start_id)

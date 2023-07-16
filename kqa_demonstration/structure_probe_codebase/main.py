@@ -65,6 +65,8 @@ def main():
                         default='kopl')
     parser.add_argument('--data_dir', type=str,
                         required=True)
+    parser.add_argument('--seed_dir', type=str,
+                        required=True)
     parser.add_argument('--test_dir', type=str,
                         default="")
     parser.add_argument('--cache_dir', type=str,

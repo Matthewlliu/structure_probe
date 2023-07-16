@@ -7,12 +7,16 @@ from bm25 import BM25_Model
 class kopl_data(object):
     def __init__(self, args):
         self.args = args
-        self.data_path = args.data_dir
+        self.seed_path = args.seed_dir
+        self.aug_path = args.data_dir
         self.cache_path = args.cache_dir
         
         # initialize, load training data
-        with open(self.data_path, 'r') as f:
+        with open(self.seed_path, 'r') as f:
             self.data = json.load(f)
+
+        with open(self.aug_path, 'r') as f:
+            self.aug_part = json.load(f)
             
         if self.args.if_lf2nl:
             # extract skeleton
