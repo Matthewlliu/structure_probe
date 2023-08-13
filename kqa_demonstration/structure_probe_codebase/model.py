@@ -42,6 +42,7 @@ class HuggingfaceModel(object):
         tokenizer_cls = get_tokenizer_by_name(args.model_name)
         self.tokenizer = tokenizer_cls.from_pretrained(args.model_dir)
         
+        '''
         if args.model_name.startswith('gpt') or args.model_name.startswith('flan'):
             self.model = deepspeed.init_inference(
                 model=self.model,      # Transformers models
@@ -50,6 +51,7 @@ class HuggingfaceModel(object):
                 replace_method="auto", # Lets DS autmatically identify the layer to replace
                 replace_with_kernel_inject=True, # replace the model with the kernel injector
             )
+            '''
         
 
     def generate_text(self, input_texts, max_length=1024, decoding='sampling', suffix='', isfilter=True):
@@ -181,7 +183,8 @@ class OpenaiReq():
             'prompt': prompt,
             'temperature': self.args.temperature,
             'max_tokens': max_tokens,
-            'top_p': self.args.topp
+            'top_p': self.args.topp,
+            'user_token': '38dba8e6-35c8-11ee-a59a-9cc2c4278efc'
         }
         response = None
         count = 0
@@ -192,7 +195,7 @@ class OpenaiReq():
             try:
                 #response = openai.Completion.create(model=self.args.model_name, prompt=prompt, 
                 #                            temperature=self.args.temperature, max_tokens=max_tokens, top_p=self.args.topp)
-                response = requests.post("http://103.238.162.37:10071/completion/no_cache", json=data).content.decode()
+                response = requests.post("http://103.238.162.37:9072/completion/no_cache", json=data).content.decode()
                 response = json.loads(response)
             except Exception as e:
                 err_msg = str(e)

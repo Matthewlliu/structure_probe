@@ -5,7 +5,7 @@ import numpy as np
 import re
 from bm25 import BM25_Model
 
-domains = ['basketball', 'blocks', 'calendar', 'housing', 'publications', 'recipes', 'restaurants', 'socialnetwork']
+domains = ['calendar', 'blocks', 'housing', 'restaurants', 'publications', 'recipes', 'social', 'basketball']
 lex_file = '/home/ljx/semantic-parsing-dual-master/data/overnight/human/all_lexicon.txt'
 lexicon = []
 with open(lex_file, 'r') as f:
@@ -16,7 +16,7 @@ with open(lex_file, 'r') as f:
         parts = line.split(':')
         lexicon.append([parts[0], parts[2]])
 
-class overnight_data(object):
+class overnight_kqapro_data(object):
     def __init__(self, args):
         self.args = args
         self.seed_path = args.seed_dir
@@ -29,13 +29,11 @@ class overnight_data(object):
             all_data_file = os.path.join(self.data_path, 'all_train_data.json')'''
             
         with open(self.seed_path, 'r') as f:
-            self.data = f.readlines()
-        self.data = [ d.strip() for d in self.data ]
+            self.data = json.load(f)
 
         with open(self.aug_path, 'r') as f:
-            self.aug_part = f.readlines()
-        self.aug_part = [ d.strip() for d in self.aug_part ] 
-            
+            self.aug_part = json.load(f)
+
         if self.args.if_lf2nl:
             # extract skeleton
             if not os.path.exists(self.cache_path):
@@ -51,7 +49,8 @@ class overnight_data(object):
             # extract content
             self.content = []
             for entry in self.data:
-                _, lf = entry.strip().split('\t')
+                lf = entry['lambda-dcs']
+                #_, lf = entry.strip().split('\t')
                 self.content.append(self.extract_content(lf))
         else:
             self.docs_list = [self.entity_anonymize(d) for d in self.data]
@@ -70,7 +69,7 @@ class overnight_data(object):
         
         cache = {}
         for ind, entry in enumerate(self.data):
-            text, lf = entry.strip().split('\t')
+            lf = entry['lambda-dcs']
             bones = self.extract_bones(lf)
             if bones in cache:
                 cache[bones].append(ind)
@@ -118,7 +117,8 @@ class overnight_data(object):
             sample_id: 用于排除自身
         """
         if self.args.if_lf2nl:
-            text, lf = entry.strip().split('\t')
+            text = entry['rewrite']
+            lf = entry['lambda-dcs']
 
             bones = self.extract_bones(lf)
             content = self.extract_content(lf)
@@ -167,20 +167,6 @@ class overnight_data(object):
                 que, lf = self.data[sample].strip().split('\t')
                 #lf = self.extract_bones(lf)
                 pairs.append([que, lf])
-
-            overnight_path = '/home/ljx/semantic-parsing-dual-master/data/overnight'
-            domain = domains[sample_id//30]
-            lex_file = os.path.join(overnight_path, domain+'_lexicon.txt')
-            vocab_file = os.path.join(overnight_path, domain+'_vocab.lf')
-            with open(lex_file, 'r') as f:
-                lex = f.readlines(f)
-            lex = [l.split(':')[-1].strip() for l in lex]
-            with open(vocab_file, 'r') as f:
-                voc = f.readlines(f)
-            voc = [v.strip() for v in voc]
-
-            question = "Vocabulary and possible entities are (%s)" % ', '.join(voc+lex) + question
-            
             prompt = ensemble_input(pairs, question, self.args.logic_forms, self.args.if_lf2nl, reverse=True)
             
             #entity = []
@@ -217,7 +203,9 @@ class overnight_data(object):
         if more > 0:
             print("Warning, not enough examples. Require {}, retrieved {}, {} short".format(self.args.demo_num, len(sample_cand), more))
         for sample in sample_cand:
-            que, pro = self.data[sample].split('\t')
+            #que, pro = self.data[sample].split('\t')
+            que = self.data[sample]['rewrite']
+            pro = self.data[sample]['lambda-dcs']
             #pro = self.data[sample]['program']
             pairs.append([que, pro])
         return pairs

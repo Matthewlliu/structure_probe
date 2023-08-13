@@ -23,7 +23,7 @@ logFormatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
 rootLogger = logging.getLogger()
 import warnings
 warnings.simplefilter("ignore") # hide warnings that caused by invalid sparql query
-
+kb_vocab_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/bart-base_processed/new_kb_vocab_2.json'
 
 
 
@@ -41,8 +41,76 @@ def train(args):
     
     logging.info("Create model.........")
     config_class, model_class, tokenizer_class = (BartConfig, BartForConditionalGeneration, BartTokenizer)
-    tokenizer = tokenizer_class.from_pretrained(os.path.join(args.model_name_or_path, 'tokenizer'))
-    model = model_class.from_pretrained(os.path.join(args.model_name_or_path, 'model'))
+    tokenizer = tokenizer_class.from_pretrained(args.model_name_or_path)
+    model = model_class.from_pretrained(args.model_name_or_path) #os.path.join(args.model_name_or_path, 'model'))
+    
+    # Assigning embeddings to kb_vocab
+    def split_vocab_name(v):
+        out = []
+        v = v.split('.')
+        for vv in v:
+            out += vv.split('_')
+        return out
+
+    with open(kb_vocab_file, 'r') as f:
+        target_tokens = json.load(f)
+    for token in tqdm(target_tokens):
+        tokenizer.add_tokens(token)
+    if len(target_tokens) > 0:
+        model.resize_token_embeddings(len(tokenizer))
+
+    origin_tokens = [ split_vocab_name(v) for v in target_tokens ]
+
+    for o, t in zip(origin_tokens, target_tokens):
+        # o_token_ids = [tokenizer.convert_tokens_to_ids([item])[0] for item in o]
+        if isinstance(o, list):
+            if len(o) == 1:
+                o_tokens = tokenizer.tokenize(o[0])
+                o_token_ids = tokenizer.convert_tokens_to_ids(o_tokens)
+                # print(o, tokenizer.convert_tokens_to_ids(o))
+                if isinstance(o_token_ids, list):
+                    o_token_ids = [o_token_ids]
+                else:
+                    o_token_ids = [[o_token_ids]]
+            else:
+                o_token_ids = []
+                for item in o:
+                    # print("multi-", item)
+                    item_tokens = tokenizer.tokenize(item)
+                    item_token_ids = tokenizer.convert_tokens_to_ids(item_tokens)
+                    # print(item_token_ids)
+                    if isinstance(item_token_ids, list):
+                        o_token_ids.append(item_token_ids)
+                    else:
+                        o_token_ids.append([item_token_ids])
+            o_counts = len(o)
+
+            t_token_id = tokenizer.convert_tokens_to_ids([t])[0]
+            # print(o)
+            # print(o_token_ids)
+
+            with torch.no_grad():
+                #print(f"Assign [[%s]] to [[%s]]" % (o, t))
+                if o_counts == 1:
+                    encoder_token_embeds = 0
+                    decoder_token_embeds = 0
+                    for o_token_id in o_token_ids[0]:
+                        encoder_token_embeds += model.model.encoder.embed_tokens.weight[o_token_id].detach().clone()
+                        decoder_token_embeds += model.model.decoder.embed_tokens.weight[o_token_id].detach().clone()
+                    model.model.encoder.embed_tokens.weight[t_token_id] = encoder_token_embeds
+                    model.model.decoder.embed_tokens.weight[t_token_id] = decoder_token_embeds
+                else:
+                    encoder_token_embeds = 0
+                    decoder_token_embeds = 0
+                    for item in o_token_ids:
+                        for o_token_id in item:
+                            encoder_token_embeds += model.model.encoder.embed_tokens.weight[o_token_id].detach().clone()
+                            decoder_token_embeds += model.model.decoder.embed_tokens.weight[o_token_id].detach().clone()
+                    encoder_token_embeds = encoder_token_embeds / o_counts
+                    decoder_token_embeds = decoder_token_embeds / o_counts
+                    model.model.encoder.embed_tokens.weight[t_token_id] = encoder_token_embeds
+                    model.model.decoder.embed_tokens.weight[t_token_id] = decoder_token_embeds
+
     model = model.to(device)
     logging.info(model)
     t_total = len(train_loader) // args.gradient_accumulation_steps * args.num_train_epochs    # Prepare optimizer and schedule (linear warmup and decay)
@@ -150,7 +218,7 @@ def train(args):
         logging.info("\n")
         if 'cuda' in str(device):
             torch.cuda.empty_cache()
-        if (epoch+1)%5 == 0:
+        if (epoch+1)%4 == 0: #or epoch==0:
             logging.info("===================Dev==================")
             f1 = evaluate_sparql(args, model, val_loader, device, tokenizer)
             logging.info("Dev F1 score@epoch%s: %s" % (epoch, f1))
@@ -170,10 +238,10 @@ def main():
     # training parameters
     parser.add_argument('--weight_decay', default=1e-5, type=float)
     parser.add_argument('--batch_size', default=8, type=int)
-    parser.add_argument('--seed', type=int, default=666, help='random seed')
+    parser.add_argument('--seed', type=int, default=501, help='random seed')
     parser.add_argument('--learning_rate', default=3e-5, type = float)
     parser.add_argument('--num_train_epochs', default=10, type = int)
-    parser.add_argument('--save_steps', default=500, type = int)
+    parser.add_argument('--save_steps', default=1000, type = int)
     parser.add_argument('--logging_steps', default=448, type = int)
     parser.add_argument('--warmup_proportion', default=0.1, type = float,
                         help="Proportion of training to perform linear learning rate warmup for,E.g., 0.1 = 10% of training.")
@@ -194,6 +262,8 @@ def main():
 
     if not os.path.exists(args.save_dir):
         os.makedirs(args.save_dir)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     time_ = time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())
     fileHandler = logging.FileHandler(os.path.join(args.save_dir, '{}.log'.format(time_)))
     fileHandler.setFormatter(logFormatter)
@@ -202,7 +272,7 @@ def main():
     for k, v in vars(args).items():
         logging.info(k+':'+str(v))
 
-    seed_everything(666)
+    seed_everything(501)
 
     train(args)
 

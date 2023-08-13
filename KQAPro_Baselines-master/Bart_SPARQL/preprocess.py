@@ -8,6 +8,7 @@ from collections import Counter
 from itertools import chain
 from tqdm import tqdm
 import re
+import torch
 
 from utils.misc import init_vocab
 from transformers import *
@@ -17,7 +18,7 @@ mid2ent_file = '/home/ljx/entity_list_file_freebase_complete_all_mention'
 #entlink_file = '/home/ljx/GrailQA-main/entity_linking/grailqa_el.json'
 #with open(entlink_file, 'r') as f:
 #    grailqa_el = json.load(f)
-kb_vocab_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/bart-base_processed/new_kb_vocab.json'
+kb_vocab_file = '/home/ljx/new_cache_server32_0411/GrailQA_data/bart-base_processed/new_kb_vocab_2.json'
 
 
 mid2name = {}
@@ -132,7 +133,13 @@ def encode_dataset(dataset, vocab, tokenizer, test = False):
     #answers = np.array(answers, dtype = np.int32)
     return source_ids, source_mask, target_ids, entities, answers, new_vocab
 
-
+def split_vocab_name(v):
+    out = []
+    v = v.split('.')
+    for vv in v:
+        out += vv.split('_')
+    return out
+    
 
 def main():
     parser = argparse.ArgumentParser()
@@ -165,18 +172,73 @@ def main():
         json.dump(vocab, f, indent=2)
     for k in vocab:
         print('{}:{}'.format(k, len(vocab[k])))
-    model = BartForConditionalGeneration.from_pretrained(args.model_name_or_path)
+    #model = BartForConditionalGeneration.from_pretrained(args.model_name_or_path)
     tokenizer = BartTokenizer.from_pretrained(args.model_name_or_path)
     with open(kb_vocab_file, 'r') as f:
         kb_new_vocab = json.load(f)
-    for token in kb_new_vocab:
-        token = token[1:]
-        if len(token)>100 or '.' not in token:
-            continue
-        tokenizer.add_tokens(token)
-    if len(kb_new_vocab) > 0:
-        model.resize_token_embeddings(len(tokenizer))
-    model.save_pretrained(os.path.join(args.output_dir, 'model'))
+    for token in tqdm(kb_new_vocab):
+        #token = token[1:]
+        #if len(token)>100 or '.' not in token:
+        #    continue
+        tokenizer.add_tokens(token, verbose=False)
+    #if len(kb_new_vocab) > 0:
+    #    model.resize_token_embeddings(len(tokenizer))
+    '''
+    # Assigning embeddings to kv_vocab
+    target_tokens = kb_new_vocab
+    origin_tokens = [ split_vocab_name(v) for v in kb_new_vocab ]
+
+    for o, t in zip(origin_tokens, target_tokens):
+        # o_token_ids = [tokenizer.convert_tokens_to_ids([item])[0] for item in o]
+        if isinstance(o, list):
+            if len(o) == 1:
+                o_tokens = tokenizer.tokenize(o[0])
+                o_token_ids = tokenizer.convert_tokens_to_ids(o_tokens)
+                # print(o, tokenizer.convert_tokens_to_ids(o))
+                if isinstance(o_token_ids, list):
+                    o_token_ids = [o_token_ids]
+                else:
+                    o_token_ids = [[o_token_ids]]
+            else:
+                o_token_ids = []
+                for item in o:
+                    # print("multi-", item)
+                    item_tokens = tokenizer.tokenize(item)
+                    item_token_ids = tokenizer.convert_tokens_to_ids(item_tokens)
+                    # print(item_token_ids)
+                    if isinstance(item_token_ids, list):
+                        o_token_ids.append(item_token_ids)
+                    else:
+                        o_token_ids.append([item_token_ids])
+            o_counts = len(o)
+
+            t_token_id = tokenizer.convert_tokens_to_ids([t])[0]
+            # print(o)
+            # print(o_token_ids)
+
+            with torch.no_grad():
+                print(f"Assign [[%s]] to [[%s]]" % (o, t))
+                if o_counts == 1:
+                    encoder_token_embeds = 0
+                    decoder_token_embeds = 0
+                    for o_token_id in o_token_ids[0]:
+                        encoder_token_embeds += model.model.encoder.embed_tokens.weight[o_token_id].detach().clone()
+                        decoder_token_embeds += model.model.decoder.embed_tokens.weight[o_token_id].detach().clone()
+                    model.model.encoder.embed_tokens.weight[t_token_id] = encoder_token_embeds
+                    model.model.decoder.embed_tokens.weight[t_token_id] = decoder_token_embeds
+                else:
+                    encoder_token_embeds = 0
+                    decoder_token_embeds = 0
+                    for item in o_token_ids:
+                        for o_token_id in item:
+                            encoder_token_embeds += model.model.encoder.embed_tokens.weight[o_token_id].detach().clone()
+                            decoder_token_embeds += model.model.decoder.embed_tokens.weight[o_token_id].detach().clone()
+                    encoder_token_embeds = encoder_token_embeds / o_counts
+                    decoder_token_embeds = decoder_token_embeds / o_counts
+                    model.model.encoder.embed_tokens.weight[t_token_id] = encoder_token_embeds
+                    model.model.decoder.embed_tokens.weight[t_token_id] = decoder_token_embeds
+    '''
+    #model.save_pretrained(os.path.join(args.output_dir, 'model'))
     tokenizer.save_pretrained(os.path.join(args.output_dir, "tokenizer"))
     
     #all_kb_vocab = []

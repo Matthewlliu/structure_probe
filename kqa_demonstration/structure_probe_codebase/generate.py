@@ -45,7 +45,7 @@ def generate_from_online(post_api, dataset, args):
             prompts.append(prompt)
             if entity is not None:
                 entities.append(entity)
-            #print("Program: ",entry['sparql_query'])
+            #print("Program: ",entry['lambda-dcs'])
             #print("Prompt:, ",prompt)
         if args.model_name in ['glm-130b']:
             sequences = post_api.sending_post(prompts)
@@ -75,10 +75,28 @@ def generate_from_online(post_api, dataset, args):
         
 
 def generate_from_local_model(model, dataset, args):
-    aug_part = dataset.aug_part[args.start_id:args.augment_size]
+    if args.if_lf2nl:
+        aug_part = dataset.aug_part[args.start_id:args.augment_size]
+    else:
+        if args.logic_forms == 'lambdaDCS':
+            aug_part = []
+            for k, inds in sample_id.items():
+                with open(os.path.join(args.test_dir, k+'_test.tsv'), 'r') as f:
+                    tmp = f.readlines()
+                    aug_part.extend([ tmp[i] for i in inds ])
+        else:
+            with open(args.test_dir, 'r') as f:
+                aug_part = json.load(f)
+                #aug_part = aug_part[args.start_id:args.augment_size]
+                aug_part = [  aug_part[i] for i in sample_id ]
+
+        if args.toy:
+            aug_part = aug_part[:5]
+        print("Length of test set: {}".format(len(aug_part)))
+        
     seq_list = []
     for ind, entry in enumerate(tqdm(aug_part)):
-        prompt, _ = dataset.retrieve_demonstrations(entry, ind+args.start_id)
+        prompt, entity = dataset.retrieve_demonstrations(entry, ind+args.start_id)
         #print("Golden: {}".format(entry['question']))
         #print("Prompt: {}".format(prompt))
         #try:
@@ -89,6 +107,8 @@ def generate_from_local_model(model, dataset, args):
         #    continue
         #print(sequence)
         sequence = post_process(sequence, args.demo_num)
+        if entity is not None:
+            sequence = [sequence, entity]
         #print("Generated text: {} \n".format(sequence))
         #input()
         seq_list.append(sequence)
@@ -100,7 +120,7 @@ def generate_from_local_model(model, dataset, args):
             save_data(aug_part[s_id:e_id], seq_list[s_id:e_id], args, save_id + args.start_id//args.save_step)
 
 def save_data(aug_part, seq_list, args, save_id):
-    if args.logic_forms == 'kopl':
+    if args.logic_forms in ['kopl', 'lambdaDCS_kqapro']:
         for entry, seq in zip(aug_part, seq_list):
             if args.if_lf2nl:
                 entry['question'] = seq
@@ -109,7 +129,7 @@ def save_data(aug_part, seq_list, args, save_id):
     elif args.logic_forms == 'lambdaDCS':
         for ind, seq in enumerate(seq_list):
             aug_part[ind] = seq  + '\t' + aug_part[ind].split('\t')[1]
-    elif args.logic_forms == 'sparql':
+    elif args.logic_forms in ['sparql', 'sparql_kqapro']:
         for entry, seq in zip(aug_part, seq_list):
             if args.if_lf2nl:
                 entry['question'] = seq

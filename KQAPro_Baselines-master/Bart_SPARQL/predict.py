@@ -18,6 +18,7 @@ import logging
 import time
 from utils.lr_scheduler import get_linear_schedule_with_warmup
 import re
+import numpy as np
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)-8s %(message)s')
 logFormatter = logging.Formatter('%(asctime)s %(levelname)-8s %(message)s')
 rootLogger = logging.getLogger()
@@ -30,6 +31,23 @@ PREFIX_DICT = {
     ":": "http://rdf.freebase.com/ns/"
 }
 PREFIX = 'PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX : <http://rdf.freebase.com/ns/> '
+#mid2ent_file = '/home/ljx/entity_list_file_freebase_complete_all_mention'
+'''
+name2mid = {}
+with open(mid2ent_file, 'r') as f:
+    for line in f.readlines():
+        tmp = line.split('\t')
+        mid = tmp[0]
+        name = tmp[1]
+        name2mid[name] = mid
+'''
+selected_name2mid_file = '/home/ljx/structure_probe/KQAPro_Baselines-master/selected_freebase_mid.json'
+name2mid = json.load(open(selected_name2mid_file, 'r'))
+from bm25 import BM25_Model
+name2mid_keys = list(name2mid.keys())
+doc_list = [ n.split() for n in name2mid_keys ]
+print("Successfully load name2mid. Length %s" % len(doc_list))
+bm25model = BM25_Model(doc_list)
 
 def whether_equal(answer, pred):
     """
@@ -109,7 +127,7 @@ def post_process(text, ent):
     assert len(pos) / 2 == len(nes) + 1
     chunks = [text[pos[i]: pos[i+1]] for i in range(0, len(pos), 2)]
     for i in range(len(chunks)):
-        chunks[i] = chunks[i].replace('?', ' ?') #.replace('.', ' .')
+        chunks[i] = chunks[i].replace('?', ' ?').replace(': ', ':')
     bingo = ''
     for i in range(len(chunks) - 1):
         bingo += chunks[i] + nes[i][0]
@@ -118,8 +136,20 @@ def post_process(text, ent):
     for t, e in ent.items():
         if t in bingo:
             bingo = bingo.replace(t, e[0])
+
+    pa = r':\[.+\]'
+    ls = re.findall(pa, bingo)
+
+    for part in ls:
+        string = part[2:-1].split()
+        scores = bm25model.get_documents_score(string)
+        sort_index = np.argsort(scores)
+        cand_id = sort_index[-1]
+        cand_name = name2mid_keys[cand_id]
+        cand_mid = name2mid[cand_name]
+        bingo = bingo.replace(part[1:], cand_mid)
     bingo = PREFIX + bingo
-    return bingo
+    return bingo.strip()
 
 def vis(args, kb, model, data, device, tokenizer):
     while True:
@@ -191,13 +221,23 @@ def evaluate_sparql(args, model, val_loader, device, tokenizer):
             target_ids = target_ids.to(device)
             outputs = model.generate(
                 input_ids=source_ids,
-                max_length = 500,
+                max_length = 512,
             )
 
             all_outputs.extend(outputs.cpu().numpy())
             all_answers.extend(answer)
             all_entities.extend(entities)
-        outputs = [tokenizer.decode(output_id, skip_special_tokens = True, clean_up_tokenization_spaces = True) for output_id in all_outputs]
+
+        outputs = []
+        for ind, output_id in enumerate(all_outputs):
+            try:
+                outputs.append(tokenizer.decode(output_id, skip_special_tokens = True, clean_up_tokenization_spaces = True))
+            except TypeError:
+                print(ind)
+                print(output_id)
+                print(all_entities[ind])
+                exit()
+        #outputs = [tokenizer.decode(output_id, skip_special_tokens = True, clean_up_tokenization_spaces = True) for output_id in all_outputs]
         print("All outputs decoded | %s" % len(outputs))
         assert len(outputs)==len(all_entities)
         pred_sparql = [post_process(output,ent) for output,ent in zip(outputs,all_entities)]
@@ -209,15 +249,15 @@ def evaluate_sparql(args, model, val_loader, device, tokenizer):
         res = []
         for a, s in tqdm(zip(given_answer, pred_sparql)):
             pred_answer = get_sparql_ans(s)
-            if pred_answer!=a:
-                print(s)
-                print(pred_answer)
-                print(a)
+            #if pred_answer!=a:
+            #    print(s)
+            #    print(pred_answer)
+            #    print(a)
             pred_f1 = caculate_f1(pred_answer, a)
             res.append({'pred_sparql': s, 'pred_ans': pred_answer, 'gold_ans': a, 'f1': pred_f1})
             f1 += pred_f1
             count += 1
-        json.dump(res, open('pred_sparql.json', 'w'))
+        json.dump(res, open(os.path.join(args.output_dir, 'pred_sparql.json'), 'w'))
     f1 = f1 / count
     logging.info('\nValid F1: %.4f\n' % f1)
     return f1
@@ -250,6 +290,8 @@ def get_sparql_ans(query):
                 tmp = r['value']['value'].replace(PREFIX_DICT['rdfs:'], '')
             elif r['value']['value'].startswith(PREFIX_DICT[':']):
                 tmp = r['value']['value'].replace(PREFIX_DICT[':'], '')
+            else:
+                tmp = r['value']['value']
             out.append(tmp)
     except:
         out = []

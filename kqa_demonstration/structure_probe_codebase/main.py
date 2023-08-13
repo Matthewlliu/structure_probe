@@ -36,7 +36,7 @@ ONLINE_MODEL = [
 def generate(args):
     dataset = get_Dataset(args)
     logging.info("Loading dataset completed.")
-    logging.info("Dataset size: %s" % len(dataset.data))
+    logging.info("Dataset size: %s" % len(dataset.aug_part))
     #if len(dataset.data) > args.augment_size:
     #   args.augment_size = len(dataset.data)
     
@@ -106,13 +106,16 @@ def main():
     save_folder_name += "_demo" + str(args.demo_num)
     
     if args.toy:
-        args.augment_size = 12
+        args.augment_size = 3
         #args.save_step = 12
         save_folder_name += '_toy'
     else:
         save_folder_name += '_%s' % args.augment_size
     if args.if_naive:
         save_folder_name += '_naive'
+    
+    if args.data_dir != args.seed_dir:
+        save_folder_name += '_seed1'
         
     if len(args.output_dir)==0:
         args.output_dir = os.path.join(args.data_dir, save_folder_name)
